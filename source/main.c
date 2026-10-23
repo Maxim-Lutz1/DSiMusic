@@ -1,6 +1,9 @@
 #include <nds.h>
+#include <fat.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include "covers_generated.h"
 
 #define W 256
 #define H 192
@@ -11,6 +14,7 @@
 static u16 *top;
 static u16 *bottom;
 static int selected = 0;
+static const char *sdStatus = "SD NOT TESTED";
 
 typedef struct {
     const char *title;
@@ -90,33 +94,59 @@ static void text(u16 *screen, int x, int y,
     }
 }
 
+
 static void cover(u16 *screen, int x, int y, int size, int id)
 {
-    u16 edge = COL(29,27,31);
-    u16 dark = COL(4,4,7);
-    u16 center = COL(25,24,29);
+    if (id < 0 || id >= COUNT)
+        return;
 
-    rect(screen, x, y, size, size, edge);
-    rect(screen, x + 2, y + 2, size - 4, size - 4,
-         albums[id].color);
+    for (int dy = 0; dy < size; dy++) {
+        int sy = dy * 64 / size;
+        int py = y + dy;
 
-    /* Stylized record art, temporary cover placeholder */
-    int cx = x + size / 2;
-    int cy = y + size / 2;
-    int outer = size / 3;
-    int inner = size / 10;
+        if (py < 0 || py >= H)
+            continue;
 
-    for (int yy = -outer; yy <= outer; yy++) {
-        for (int xx = -outer; xx <= outer; xx++) {
-            int d = xx * xx + yy * yy;
-            if (d <= outer * outer)
-                screen[(cy + yy) * W + cx + xx] = dark;
-            if (d <= inner * inner)
-                screen[(cy + yy) * W + cx + xx] = center;
+        for (int dx = 0; dx < size; dx++) {
+            int sx = dx * 64 / size;
+            int px = x + dx;
+
+            if (px < 0 || px >= W)
+                continue;
+
+            screen[py * W + px] =
+                albumCovers[id][sy * 64 + sx];
         }
     }
+}
 
-    text(screen, x + 5, y + 5, "DSI", 1, COL(31,31,31));
+static void testSD(void)
+{
+    if (!fatInitDefault()) {
+        sdStatus = "SD INIT FAILED";
+        return;
+    }
+
+    FILE *f = fopen("sd:/Music/test.txt", "rb");
+
+    if (!f) {
+        /* Alternative for DS-mode flashcart setups */
+        f = fopen("fat:/Music/test.txt", "rb");
+    }
+
+    if (!f) {
+        sdStatus = "TEST FILE NOT FOUND";
+        return;
+    }
+
+    char buffer[64] = {0};
+    size_t n = fread(buffer, 1, sizeof(buffer) - 1, f);
+    fclose(f);
+
+    if (n > 0 && strstr(buffer, "DSiMusic SD test OK"))
+        sdStatus = "SD READ SUCCESS";
+    else
+        sdStatus = "SD READ ERROR";
 }
 
 static void drawTop(void)
@@ -138,7 +168,7 @@ static void drawTop(void)
     text(top, 128, 118, "THE HORIZON", 1, COL(31,31,31));
 
     rect(top, 12, 160, 232, 1, COL(14,12,21));
-    text(top, 15, 173, "AUDIO COMING SOON", 1, COL(19,17,24));
+    text(top, 15, 173, sdStatus, 1, COL(19,27,21));
 }
 
 static void drawBottom(void)
@@ -188,6 +218,7 @@ int main(void)
     top = bgGetGfxPtr(topBg);
     bottom = bgGetGfxPtr(bottomBg);
 
+    testSD();
     drawAll();
 
     while (1) {
