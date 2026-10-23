@@ -49,3 +49,6 @@ library.json
 *.backup.*
 *.tmp
 *.log
+
+# Local source backups
+*.before_*
