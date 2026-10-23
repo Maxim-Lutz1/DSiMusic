@@ -1,7 +1,7 @@
 #ifndef DSIMUSIC_LIBRARY_SCANNER_H
 #define DSIMUSIC_LIBRARY_SCANNER_H
 
-#define MAX_ALBUMS 6
+#define MAX_ALBUMS 48
 #define LIB_NAME_SIZE 48
 
 typedef struct {

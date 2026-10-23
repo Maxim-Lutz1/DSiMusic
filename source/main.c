@@ -427,9 +427,21 @@ static void drawBottom(void)
     text(bottom, 12, 10, "YOUR LIBRARY",
          2, COL(28,25,31));
 
-    for (int i = 0; i < albumCount; ++i) {
-        int col = i % 3;
-        int row = i / 3;
+    /* DSIMUSIC_ALBUM_PAGES_V2: six albums visible per page. */
+    int page = selected / 6;
+    int firstAlbum = page * 6;
+    int lastAlbum = firstAlbum + 6;
+    if (lastAlbum > albumCount) lastAlbum = albumCount;
+
+    char albumPageText[24];
+    snprintf(albumPageText, sizeof(albumPageText), "%d/%d",
+             page + 1, (albumCount + 5) / 6);
+    text(bottom, 198, 12, albumPageText, 1, COL(24,22,29));
+
+    for (int i = firstAlbum; i < lastAlbum; ++i) {
+        int slot = i - firstAlbum;
+        int col = slot % 3;
+        int row = slot / 3;
         int x = 16 + col * 80;
         int y = 39 + row * 66;
 
@@ -628,9 +640,13 @@ int main(void)
                 touchPosition touch;
                 touchRead(&touch);
 
-                for (int i = 0; i < albumCount; i++) {
-                    int x = 16 + (i % 3) * 80;
-                    int y = 39 + (i / 3) * 66;
+                int firstVisible = (selected / 6) * 6;
+                int lastVisible = firstVisible + 6;
+                if (lastVisible > albumCount) lastVisible = albumCount;
+                for (int i = firstVisible; i < lastVisible; i++) {
+                    int slot = i - firstVisible;
+                    int x = 16 + (slot % 3) * 80;
+                    int y = 39 + (slot / 3) * 66;
 
                     if (touch.px >= x && touch.px < x + 64 &&
                         touch.py >= y && touch.py < y + 64)
