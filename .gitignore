@@ -5,3 +5,15 @@ __pycache__/
 *.o
 *.elf
 *.nds
+
+# Local backups
+*.backup
+
+# Generated assets
+source/covers_generated.h
+source/font_generated.h
+
+# Emulator files
+*.sav
+*.mch
+*.ml[0-9]

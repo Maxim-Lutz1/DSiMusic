@@ -1,13 +1,16 @@
 #include <nds.h>
+#include "font_generated.h"
+#include "../include/library_scanner.h"
+#include "../include/library_tracks.h"
 #include <fat.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <strings.h>
 #include "covers_generated.h"
 
 #define W 256
 #define H 192
-#define COUNT 6
 
 #define COL(r,g,b) (RGB15(r,g,b) | BIT(15))
 
@@ -16,36 +19,51 @@ static u16 *bottom;
 static int selected = 0;
 static const char *sdStatus = "SD NOT TESTED";
 
-typedef struct {
-    const char *title;
-    const char *artist;
-    u16 color;
-} Album;
 
-static const Album albums[COUNT] = {
-    {"SEMPITERNAL",    "BRING ME THE HORIZON", COL(20,18,22)},
-    {"SUICIDE SEASON", "BRING ME THE HORIZON", COL(21,8,8)},
-    {"THATS THE SPIRIT","BRING ME THE HORIZON",COL(13,13,22)},
-    {"AMO",            "BRING ME THE HORIZON", COL(24,13,20)},
-    {"SURVIVAL HORROR","BRING ME THE HORIZON", COL(15,21,18)},
-    {"COUNT YOUR",     "BRING ME THE HORIZON", COL(16,10,17)}
-};
+static LibraryAlbum albums[MAX_ALBUMS];
+static int albumCount = 0;
 
-/* 3x5 pixel font: A-Z, 0-9 */
-static const u8 font[36][5] = {
-    {2,5,7,5,5}, {6,5,6,5,6}, {3,4,4,4,3},
-    {6,5,5,5,6}, {7,4,6,4,7}, {7,4,6,4,4},
-    {3,4,5,5,3}, {5,5,7,5,5}, {7,2,2,2,7},
-    {1,1,1,5,2}, {5,5,6,5,5}, {4,4,4,4,7},
-    {5,7,7,5,5}, {5,7,7,7,5}, {2,5,5,5,2},
-    {6,5,6,4,4}, {2,5,5,7,3}, {6,5,6,5,5},
-    {3,4,2,1,6}, {7,2,2,2,2}, {5,5,5,5,7},
-    {5,5,5,5,2}, {5,5,7,7,5}, {5,5,2,5,5},
-    {5,5,2,2,2}, {7,1,2,4,7},
-    {7,5,5,5,7}, {2,6,2,2,7}, {6,1,7,4,7},
-    {6,1,3,1,6}, {5,5,7,1,1}, {7,4,6,1,6},
-    {3,4,7,5,7}, {7,1,2,2,2}, {7,5,7,5,7},
-    {7,5,7,1,6}
+#define COVER_SIZE 64
+#define COVER_PIXELS (COVER_SIZE * COVER_SIZE)
+
+static u16 coverPixels[MAX_ALBUMS][COVER_PIXELS];
+static int coverLoaded[MAX_ALBUMS];
+
+static void loadAlbumCovers(void)
+{
+    for (int i = 0; i < albumCount; i++) {
+        coverLoaded[i] = 0;
+
+        char path[512];
+        int n = snprintf(path, sizeof(path),
+                         "%s/cover.bin", albums[i].path);
+
+        if (n < 0 || n >= (int)sizeof(path))
+            continue;
+
+        FILE *file = fopen(path, "rb");
+        if (!file)
+            continue;
+
+        size_t count = fread(coverPixels[i], sizeof(u16),
+                             COVER_PIXELS, file);
+        fclose(file);
+
+        if (count == COVER_PIXELS)
+            coverLoaded[i] = 1;
+    }
+}
+
+static LibraryTrack tracks[MAX_TRACKS];
+static int trackCount = 0;
+static int trackSelected = 0;
+static int trackView = 0;
+
+
+static const char *libraryStatus = "SCANNING";
+static const u16 fallbackColors[MAX_ALBUMS] = {
+    COL(20,18,22), COL(21,8,8), COL(13,13,22),
+    COL(24,13,20), COL(15,21,18), COL(16,10,17)
 };
 
 static void rect(u16 *screen, int x, int y, int w, int h, u16 color)
@@ -61,43 +79,54 @@ static void rect(u16 *screen, int x, int y, int w, int h, u16 color)
             screen[yy * W + xx] = color;
 }
 
+
 static void text(u16 *screen, int x, int y,
-                 const char *s, int scale, u16 color)
+                 const char *str, int scale, u16 color)
 {
-    int startX = x;
+    int originX = x;
 
-    while (*s) {
-        char ch = *s++;
+    if (scale < 1)
+        scale = 1;
 
-        if (ch == '\n') {
-            x = startX;
-            y += 6 * scale;
+    while (*str) {
+        unsigned char c = (unsigned char)*str++;
+
+        if (c == '\n') {
+            x = originX;
+            y += FONT_HEIGHT * scale + 2;
             continue;
         }
 
-        int id = -1;
-        if (ch >= 'A' && ch <= 'Z') id = ch - 'A';
-        if (ch >= '0' && ch <= '9') id = 26 + ch - '0';
+        if (c < FONT_FIRST || c >= FONT_FIRST + FONT_COUNT)
+            c = '?';
 
-        if (id >= 0) {
-            for (int row = 0; row < 5; row++)
-                for (int col = 0; col < 3; col++)
-                    if (font[id][row] & (1 << (2 - col)))
-                        rect(screen, x + col * scale,
-                             y + row * scale, scale, scale, color);
+        int index = c - FONT_FIRST;
+        int advance = fontWidth[index] * scale;
+
+        /* Clip long lines instead of drawing into invalid memory. */
+        if (x >= W || y >= H)
+            break;
+
+        for (int row = 0; row < FONT_HEIGHT; ++row) {
+            uint16_t bits = fontBitmap[index][row];
+
+            for (int col = 0; col < 12; ++col) {
+                if (bits & (1u << col)) {
+                    rect(screen,
+                         x + col * scale,
+                         y + row * scale,
+                         scale, scale, color);
+                }
+            }
         }
 
-        if (ch == '-')
-            rect(screen, x, y + 2 * scale, 3 * scale, scale, color);
-
-        x += 4 * scale;
+        x += advance;
     }
 }
 
-
 static void cover(u16 *screen, int x, int y, int size, int id)
 {
-    if (id < 0 || id >= COUNT)
+    if (id < 0 || id >= albumCount)
         return;
 
     for (int dy = 0; dy < size; dy++) {
@@ -115,7 +144,12 @@ static void cover(u16 *screen, int x, int y, int size, int id)
                 continue;
 
             screen[py * W + px] =
-                albumCovers[id][sy * 64 + sx];
+                (coverLoaded[id]
+                    ? coverPixels[id][sy * 64 + sx]
+                    : (((sx - 32) * (sx - 32) +
+                         (sy - 32) * (sy - 32) < 350)
+                         ? COL(21,18,27)
+                         : COL(9,8,13)));
         }
     }
 }
@@ -149,26 +183,164 @@ static void testSD(void)
         sdStatus = "SD READ ERROR";
 }
 
+
+static void textWrapped(u16 *screen, int x, int y,
+                        const char *str, int maxWidth, u16 color)
+{
+    char line[64];
+    int lineLen = 0;
+    int lineWidth = 0;
+    int lines = 0;
+
+    while (*str && lines < 2) {
+        while (*str == ' ')
+            str++;
+
+        char word[64];
+        int wordLen = 0;
+        int wordWidth = 0;
+
+        while (*str && *str != ' ' && wordLen < 62) {
+            unsigned char c = (unsigned char)*str++;
+            word[wordLen++] = c;
+
+            if (c >= FONT_FIRST &&
+                c < FONT_FIRST + FONT_COUNT)
+                wordWidth += fontWidth[c - FONT_FIRST];
+            else
+                wordWidth += fontWidth['?' - FONT_FIRST];
+        }
+        word[wordLen] = '\0';
+
+        int spaceWidth = fontWidth[' ' - FONT_FIRST];
+
+        if (lineLen > 0 &&
+            lineWidth + spaceWidth + wordWidth > maxWidth) {
+            line[lineLen] = '\0';
+            text(screen, x, y + lines * 17, line, 1, color);
+            lines++;
+            lineLen = 0;
+            lineWidth = 0;
+        }
+
+        if (lines >= 2)
+            break;
+
+        if (lineLen > 0) {
+            line[lineLen++] = ' ';
+            lineWidth += spaceWidth;
+        }
+
+        for (int i = 0; i < wordLen && lineLen < 62; i++) {
+            unsigned char c = (unsigned char)word[i];
+            int advance = (c >= FONT_FIRST &&
+                           c < FONT_FIRST + FONT_COUNT)
+                          ? fontWidth[c - FONT_FIRST]
+                          : fontWidth['?' - FONT_FIRST];
+
+            if (lineWidth + advance > maxWidth)
+                break;
+
+            line[lineLen++] = (char)c;
+            lineWidth += advance;
+        }
+    }
+
+    if (lineLen > 0 && lines < 2) {
+        line[lineLen] = '\0';
+        text(screen, x, y + lines * 17, line, 1, color);
+    }
+}
+
+
+static int textPixelWidth(const char *str)
+{
+    int width = 0;
+
+    while (*str) {
+        unsigned char c = (unsigned char)*str++;
+
+        if (c < FONT_FIRST ||
+            c >= FONT_FIRST + FONT_COUNT)
+            c = '?';
+
+        width += fontWidth[c - FONT_FIRST];
+    }
+
+    return width;
+}
+
+static void textFit(u16 *screen, int x, int y,
+                    const char *str, int maxWidth, u16 color)
+{
+    char buffer[128];
+
+    snprintf(buffer, sizeof(buffer), "%s", str);
+
+    if (textPixelWidth(buffer) > maxWidth) {
+        int len = strlen(buffer);
+
+        while (len > 0) {
+            buffer[--len] = '\0';
+
+            if (textPixelWidth(buffer) +
+                textPixelWidth("...") <= maxWidth)
+                break;
+        }
+
+        if (maxWidth >= textPixelWidth("..."))
+            strcat(buffer, "...");
+    }
+
+    text(screen, x, y, buffer, 1, color);
+}
+
 static void drawTop(void)
 {
     rect(top, 0, 0, W, H, COL(3,3,6));
     rect(top, 0, 0, W, 29, COL(9,7,15));
 
-    text(top, 13, 9, "DSIMUSIC", 2, COL(26,20,31));
+    text(top, 13, 8, "DSIMUSIC", 1, COL(26,20,31));
     text(top, 195, 12, "V0-2", 1, COL(20,19,24));
+
+    if (albumCount == 0) {
+        text(top, 15, 60, libraryStatus, 1, COL(31,22,22));
+        return;
+    }
 
     cover(top, 14, 43, 102, selected);
 
     text(top, 128, 47, "SELECTED", 1, COL(20,17,27));
-    text(top, 128, 66, albums[selected].title,
-         1, COL(31,31,31));
+    textFit(top, 128, 66, albums[selected].title,
+            116, COL(31,31,31));
 
     text(top, 128, 94, "ARTIST", 1, COL(20,17,27));
-    text(top, 128, 108, "BRING ME", 1, COL(31,31,31));
-    text(top, 128, 118, "THE HORIZON", 1, COL(31,31,31));
+    textWrapped(top, 128, 108, albums[selected].artist,
+                116, COL(31,31,31));
 
     rect(top, 12, 160, 232, 1, COL(14,12,21));
-    text(top, 15, 173, sdStatus, 1, COL(19,27,21));
+    text(top, 15, 173, "DSIMUSIC LIBRARY", 1, COL(19,27,21));
+}
+
+
+
+
+static void formatTrackName(char *dest, int capacity,
+                            const char *filename)
+{
+    int i = 0;
+
+    while (filename[i] && i < capacity - 1) {
+        dest[i] = filename[i];
+        i++;
+    }
+
+    dest[i] = '\0';
+
+    char *dot = strrchr(dest, '.');
+    if (dot && (!strcasecmp(dot, ".wav") ||
+                !strcasecmp(dot, ".flac")))
+        *dot = '\0';
 }
 
 static void drawBottom(void)
@@ -176,13 +348,60 @@ static void drawBottom(void)
     rect(bottom, 0, 0, W, H, COL(3,3,6));
     rect(bottom, 0, 0, W, 31, COL(9,7,15));
 
-    text(bottom, 12, 10, "YOUR LIBRARY", 2, COL(28,25,31));
+    if (trackView) {
+        text(bottom, 12, 8, "TRACK LIST", 1, COL(28,25,31));
 
-    for (int i = 0; i < COUNT; i++) {
+        if (trackCount < 0) {
+            text(bottom, 12, 48, "TRACK SCAN FAILED",
+                 1, COL(31,18,18));
+        } else if (trackCount == 0) {
+            text(bottom, 12, 48, "NO WAV OR FLAC FILES",
+                 1, COL(31,26,26));
+        } else {
+            int first = 0;
+
+            if (trackSelected >= 7)
+                first = trackSelected - 6;
+
+            for (int row = 0;
+                 row < 7 && first + row < trackCount;
+                 ++row) {
+
+                int index = first + row;
+                int y = 38 + row * 18;
+
+                if (index == trackSelected)
+                    rect(bottom, 6, y - 2, 244, 17,
+                         COL(15,11,22));
+
+                text(bottom, 10, y,
+                     index == trackSelected ? ">" : " ",
+                     1, COL(29,22,31));
+
+                char displayName[49];
+                formatTrackName(displayName, sizeof(displayName),
+                                tracks[index].name);
+
+                textFit(bottom, 22, y,
+                        displayName,
+                        222, COL(28,28,30));
+            }
+        }
+
+        rect(bottom, 0, 171, W, 21, COL(9,7,15));
+        text(bottom, 12, 174, "B BACK  UP DOWN SELECT",
+             1, COL(24,22,29));
+        return;
+    }
+
+    text(bottom, 12, 10, "YOUR LIBRARY",
+         2, COL(28,25,31));
+
+    for (int i = 0; i < albumCount; ++i) {
         int col = i % 3;
         int row = i / 3;
         int x = 16 + col * 80;
-        int y = 39 + row * 69;
+        int y = 39 + row * 66;
 
         if (i == selected)
             rect(bottom, x - 3, y - 3, 70, 70,
@@ -191,8 +410,8 @@ static void drawBottom(void)
         cover(bottom, x, y, 64, i);
     }
 
-    rect(bottom, 0, 181, W, 11, COL(9,7,15));
-    text(bottom, 12, 184, "DPAD OR TOUCH TO SELECT",
+    rect(bottom, 0, 171, W, 21, COL(9,7,15));
+    text(bottom, 12, 174, "A OPEN  DPAD OR TOUCH",
          1, COL(24,22,29));
 }
 
@@ -218,8 +437,18 @@ int main(void)
     top = bgGetGfxPtr(topBg);
     bottom = bgGetGfxPtr(bottomBg);
 
-    testSD();
+    albumCount = libraryScan(albums, MAX_ALBUMS);
+
+    if (albumCount < 0) {
+        albumCount = 0;
+        libraryStatus = "SD SCAN FAILED";
+    } else if (albumCount == 0) {
+        libraryStatus = "NO ALBUMS FOUND";
+    }
+
+    loadAlbumCovers();
     drawAll();
+
 
     while (1) {
         swiWaitForVBlank();
@@ -227,35 +456,59 @@ int main(void)
 
         int keys = keysDown();
         int old = selected;
+        int oldTrack = trackSelected;
+        int oldView = trackView;
 
-        if (keys & KEY_RIGHT)
-            selected = (selected + 1) % COUNT;
+        if (trackView) {
+            if (keys & KEY_B) {
+                trackView = 0;
+            } else if (trackCount > 0) {
+                if (keys & KEY_DOWN)
+                    trackSelected = (trackSelected + 1) % trackCount;
+                if (keys & KEY_UP)
+                    trackSelected =
+                        (trackSelected + trackCount - 1) % trackCount;
+            }
+        } else if (albumCount > 0) {
+            if (keys & KEY_RIGHT)
+                selected = (selected + 1) % albumCount;
+            if (keys & KEY_LEFT)
+                selected = (selected + albumCount - 1) % albumCount;
+            if (keys & KEY_DOWN)
+                selected = (selected + 3) % albumCount;
+            if (keys & KEY_UP)
+                selected =
+                    (selected + albumCount - 3 % albumCount)
+                    % albumCount;
 
-        if (keys & KEY_LEFT)
-            selected = (selected + COUNT - 1) % COUNT;
+            if (keys & KEY_TOUCH) {
+                touchPosition touch;
+                touchRead(&touch);
 
-        if (keys & KEY_DOWN)
-            selected = (selected + 3) % COUNT;
+                for (int i = 0; i < albumCount; i++) {
+                    int x = 16 + (i % 3) * 80;
+                    int y = 39 + (i / 3) * 66;
 
-        if (keys & KEY_UP)
-            selected = (selected + 3) % COUNT;
+                    if (touch.px >= x && touch.px < x + 64 &&
+                        touch.py >= y && touch.py < y + 64)
+                        selected = i;
+                }
+            }
 
-        if (keys & KEY_TOUCH) {
-            touchPosition touch;
-            touchRead(&touch);
-
-            for (int i = 0; i < COUNT; i++) {
-                int x = 16 + (i % 3) * 80;
-                int y = 39 + (i / 3) * 69;
-
-                if (touch.px >= x && touch.px < x + 64 &&
-                    touch.py >= y && touch.py < y + 64)
-                    selected = i;
+            if (keys & KEY_A) {
+                trackCount = libraryTracksScan(
+                    albums[selected].path,
+                    tracks, MAX_TRACKS
+                );
+                trackSelected = 0;
+                trackView = 1;
             }
         }
 
-        if (selected != old)
+        if (selected != old || trackSelected != oldTrack ||
+            trackView != oldView) {
             drawAll();
+        }
     }
 
     return 0;
