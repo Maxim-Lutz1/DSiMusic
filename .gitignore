@@ -29,3 +29,23 @@ source/font_generated.h
 *.sav
 *.mch
 *.ml[0-9]
+
+# Local music collection and emulator storage
+/sdcard/
+/DSiMusic-audio-backup/
+*.wav
+*.flac
+*.mp3
+*.ogg
+*.m4a
+*.aiff
+*.wma
+cover.bin
+tracks.txt
+library.json
+
+# Temporary files and local debug
+*.backup
+*.backup.*
+*.tmp
+*.log

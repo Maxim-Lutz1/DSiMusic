@@ -2,7 +2,7 @@
 #include "font_generated.h"
 #include "../include/library_scanner.h"
 #include "../include/library_tracks.h"
-#include "../include/wav_preview.h"
+#include "../include/wav_stream.h"
 #include <fat.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -353,6 +353,22 @@ static void drawBottom(void)
     if (trackView) {
         text(bottom, 12, 8, "TRACK LIST", 1, COL(28,25,31));
 
+        char pageInfo[40];
+        int firstTrack = trackCount > 0
+                       ? (trackSelected / 7) * 7
+                       : 0;
+        int lastTrack = firstTrack + 7;
+        if (lastTrack > trackCount)
+            lastTrack = trackCount;
+
+        snprintf(pageInfo, sizeof(pageInfo),
+                 "%d-%d/%d",
+                 trackCount > 0 ? firstTrack + 1 : 0,
+                 lastTrack, trackCount);
+
+        text(bottom, 178, 8, pageInfo,
+             1, COL(25,22,29));
+
         if (trackCount < 0) {
             text(bottom, 12, 48, "TRACK SCAN FAILED",
                  1, COL(31,18,18));
@@ -362,8 +378,7 @@ static void drawBottom(void)
         } else {
             int first = 0;
 
-            if (trackSelected >= 7)
-                first = trackSelected - 6;
+            first = (trackSelected / 7) * 7;
 
             for (int row = 0;
                  row < 7 && first + row < trackCount;
@@ -425,6 +440,9 @@ static void drawAll(void)
 
 int main(void)
 {
+    consoleDebugInit(DebugDevice_NOCASH);
+    fprintf(stderr, "[DSiMusic] Debug console initialized\n");
+
     videoSetMode(MODE_5_2D);
     videoSetModeSub(MODE_5_2D);
 
@@ -449,12 +467,16 @@ int main(void)
     }
 
     loadAlbumCovers();
+    if (!wavStreamInit())
+        audioStatus = "AUDIO INIT FAILED";
+
     drawAll();
 
 
     while (1) {
         swiWaitForVBlank();
         scanKeys();
+        wavStreamUpdate();
 
         int keys = keysDown();
         int old = selected;
@@ -470,7 +492,7 @@ int main(void)
                 if (snprintf(path, sizeof(path), "%s/%s",
                              albums[selected].path, name)
                     < (int)sizeof(path)) {
-                    audioStatus = wavPreviewPlay(path);
+                    audioStatus = wavStreamPlay(path);
                 } else {
                     audioStatus = "TRACK PATH TOO LONG";
                 }
@@ -479,11 +501,16 @@ int main(void)
             }
 
             if (keys & KEY_B) {
-                wavPreviewStop();
+                wavStreamStop();
                 audioStatus = "A PLAY WAV PREVIEW";
                 audioChanged = 1;
                 trackView = 0;
             } else if (trackCount > 0) {
+                if (keys & KEY_L)
+                    trackSelected = 0;
+                if (keys & KEY_R)
+                    trackSelected = trackCount - 1;
+
                 if (keys & KEY_DOWN)
                     trackSelected = (trackSelected + 1) % trackCount;
                 if (keys & KEY_UP)
