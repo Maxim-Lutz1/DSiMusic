@@ -14,7 +14,7 @@
  */
 
 #define STREAM_RATE 32768
-#define STREAM_BUFFER 8192
+#define STREAM_BUFFER 16384
 
 static FILE *audioFile = NULL;
 static uint32_t bytesRemaining = 0;
