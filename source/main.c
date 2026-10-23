@@ -321,7 +321,20 @@ static void drawTop(void)
                 116, COL(31,31,31));
 
     rect(top, 12, 160, 232, 1, COL(14,12,21));
-    text(top, 15, 173, audioStatus, 1, COL(19,27,21));
+    /* DSIMUSIC_PROGRESS_V09 */
+    textFit(top, 15, 173, audioStatus, 135, COL(19,27,21));
+
+    if (wavStreamIsPlaying()) {
+        unsigned elapsed = wavStreamSeconds();
+        unsigned duration = wavStreamDuration();
+        char clock[32];
+
+        snprintf(clock, sizeof(clock), "%u:%02u/%u:%02u",
+                 elapsed / 60, elapsed % 60,
+                 duration / 60, duration % 60);
+
+        text(top, 151, 173, clock, 1, COL(29,27,31));
+    }
 }
 
 
@@ -440,6 +453,9 @@ static void drawAll(void)
 
 int main(void)
 {
+    /* DSIMUSIC_CLOSED_LID_V010 */
+    disableSleep();
+
     consoleDebugInit(DebugDevice_NOCASH);
     fprintf(stderr, "[DSiMusic] Debug console initialized\n");
 
@@ -473,16 +489,81 @@ int main(void)
     drawAll();
 
 
+    unsigned lastDisplayedSecond = 0;
+    bool lastStreaming = false;
+
+    bool lidWasClosed = false;
+    int playingAlbum = -1;
+    int playingTrack = -1;
+
     while (1) {
         swiWaitForVBlank();
         scanKeys();
+
+        bool lidClosed = (keysHeld() & KEY_LID) != 0;
+
+        if (lidClosed != lidWasClosed) {
+            if (lidClosed) {
+                systemSetBacklightLevel(PM_BACKLIGHT_OFF);
+                fprintf(stderr, "[LID] CLOSED - playback continues\\n");
+            } else {
+                systemSetBacklightLevel(3);
+                fprintf(stderr, "[LID] OPEN - controls restored\\n");
+                drawAll();
+            }
+            lidWasClosed = lidClosed;
+        }
+
+        bool wasStreaming = wavStreamIsPlaying();
         wavStreamUpdate();
+
+        bool autoChanged = false;
+
+        if (wasStreaming && !wavStreamIsPlaying() &&
+            playingAlbum == selected &&
+            playingTrack >= 0 &&
+            trackCount > 0 && trackView) {
+
+            int next = playingTrack + 1;
+
+            if (next < trackCount) {
+                char nextPath[512];
+                int len = snprintf(
+                    nextPath, sizeof(nextPath), "%s/%s",
+                    albums[selected].path, tracks[next].name
+                );
+
+                trackSelected = next;
+
+                if (len > 0 && len < (int)sizeof(nextPath)) {
+                    audioStatus = wavStreamPlay(nextPath);
+
+                    if (wavStreamIsPlaying())
+                        playingTrack = next;
+                    else
+                        playingTrack = -1;
+                } else {
+                    audioStatus = "TRACK PATH TOO LONG";
+                    playingTrack = -1;
+                }
+            } else {
+                audioStatus = "ALBUM FINISHED";
+                playingTrack = -1;
+            }
+
+            autoChanged = true;
+        }
+
+        /* With the lid closed, ignore all normal controls.
+           Audio streaming and auto-next keep running. */
+        if (lidClosed)
+            continue;
 
         int keys = keysDown();
         int old = selected;
         int oldTrack = trackSelected;
         int oldView = trackView;
-        int audioChanged = 0;
+        int audioChanged = autoChanged;
 
         if (trackView) {
             if ((keys & KEY_A) && trackCount > 0) {
@@ -493,6 +574,12 @@ int main(void)
                              albums[selected].path, name)
                     < (int)sizeof(path)) {
                     audioStatus = wavStreamPlay(path);
+                    if (wavStreamIsPlaying()) {
+                        playingAlbum = selected;
+                        playingTrack = trackSelected;
+                    } else {
+                        playingTrack = -1;
+                    }
                 } else {
                     audioStatus = "TRACK PATH TOO LONG";
                 }
@@ -501,6 +588,8 @@ int main(void)
             }
 
             if (keys & KEY_B) {
+                playingTrack = -1;
+                playingAlbum = -1;
                 wavStreamStop();
                 audioStatus = "A PLAY WAV PREVIEW";
                 audioChanged = 1;
@@ -510,6 +599,12 @@ int main(void)
                     trackSelected = 0;
                 if (keys & KEY_R)
                     trackSelected = trackCount - 1;
+
+                if (keys & KEY_RIGHT)
+                    trackSelected = (trackSelected + 1) % trackCount;
+                if (keys & KEY_LEFT)
+                    trackSelected =
+                        (trackSelected + trackCount - 1) % trackCount;
 
                 if (keys & KEY_DOWN)
                     trackSelected = (trackSelected + 1) % trackCount;
@@ -551,6 +646,16 @@ int main(void)
                 trackSelected = 0;
                 trackView = 1;
             }
+        }
+
+        bool streaming = wavStreamIsPlaying();
+        unsigned currentSecond = streaming ? wavStreamSeconds() : 0;
+
+        if (streaming != lastStreaming ||
+            currentSecond != lastDisplayedSecond) {
+            audioChanged = 1;
+            lastStreaming = streaming;
+            lastDisplayedSecond = currentSecond;
         }
 
         if (selected != old || trackSelected != oldTrack ||
