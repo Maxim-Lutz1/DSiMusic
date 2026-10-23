@@ -344,3 +344,24 @@ $(SOURCES_S) $(SOURCES_C) $(SOURCES_CPP): $(HEADERS_ASSETS)
 # --------------------------------------
 
 -include $(DEPS)
+
+# ------------------------------------------------------------
+# DSiMusic - Automatic asset generation
+# ------------------------------------------------------------
+
+PYTHON ?= python3
+
+GENERATED_HEADERS := source/font_generated.h \
+                     source/covers_generated.h
+
+source/font_generated.h: tools/build_font.py
+	$(PYTHON) tools/build_font.py
+
+source/covers_generated.h: tools/build_covers.py $(wildcard assets/covers/*)
+	$(PYTHON) tools/build_covers.py
+
+# Generate assets before compiling C source files.
+$(OBJS): $(GENERATED_HEADERS)
+
+.PHONY: assets
+assets: $(GENERATED_HEADERS)
