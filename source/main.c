@@ -303,7 +303,7 @@ static void drawTop(void)
     rect(top, 0, 0, W, 29, COL(9,7,15));
 
     text(top, 13, 8, "DSIMUSIC", 1, COL(26,20,31));
-    text(top, 195, 12, "V0-2", 1, COL(20,19,24));
+    text(top, 195, 12, "V0.15", 1, COL(20,19,24));
 
     if (albumCount == 0) {
         text(top, 15, 60, libraryStatus, 1, COL(31,22,22));
@@ -320,6 +320,18 @@ static void drawTop(void)
     textWrapped(top, 128, 108, albums[selected].artist,
                 116, COL(31,31,31));
 
+    /* DSIMUSIC_V015_UI: visual progress, updated by drawTop only. */
+    rect(top, 12, 156, 232, 3, COL(10,9,16));
+    if (wavStreamIsPlaying()) {
+        unsigned duration = wavStreamDuration();
+        if (duration > 0) {
+            unsigned second = wavStreamSeconds();
+            if (second > duration) second = duration;
+            int width = (int)(((unsigned long long)second * 232u) / duration);
+            if (width > 232) width = 232;
+            rect(top, 12, 156, width, 3, COL(24,16,31));
+        }
+    }
     rect(top, 12, 160, 232, 1, COL(14,12,21));
     /* DSIMUSIC_PROGRESS_V09 */
     textFit(top, 15, 173, audioStatus, 135, COL(19,27,21));
@@ -674,10 +686,14 @@ int main(void)
             lastDisplayedSecond = currentSecond;
         }
 
-        if (selected != old || trackSelected != oldTrack ||
-            trackView != oldView || audioChanged) {
-            drawAll();
-        }
+/* UI v0.15: do not redraw the album grid every playback second. */
+        bool albumMoved = selected != old;
+        bool trackMoved = trackSelected != oldTrack;
+        bool viewChanged = trackView != oldView;
+        if (albumMoved || viewChanged || audioChanged)
+            drawTop();
+        if (albumMoved || trackMoved || viewChanged)
+            drawBottom();
     }
 
     return 0;
