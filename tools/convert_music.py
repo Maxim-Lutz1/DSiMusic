@@ -2,7 +2,7 @@
 """DSiMusic library converter: audio to PCM WAV + cover.bin + library.json.
 
 Requires FFmpeg (ffmpeg, ffprobe) and ImageMagick 7 (magick).
-The generated WAV is uncompressed 16-bit 44.1 kHz stereo PCM.
+The generated WAV is uncompressed 16-bit 32.768 kHz stereo PCM.
 """
 import argparse
 import json
@@ -125,7 +125,7 @@ def main():
                     temp_path = Path(tmp.name)
                 try:
                     run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(path),
-                         '-map', '0:a:0', '-vn', '-ar', '44100', '-ac', '2',
+                         '-map', '0:a:0', '-vn', '-ar', '32768', '-ac', '2',
                          '-c:a', 'pcm_s16le', '-f', 'wav', str(temp_path)])
                     temp_path.replace(output)
                 finally:
@@ -145,11 +145,21 @@ def main():
         except (subprocess.CalledProcessError, OSError, ValueError, json.JSONDecodeError) as exc:
             failed += 1
             print(f'  ERROR: {path}: {exc}', file=sys.stderr)
-    manifest = {'version': 1, 'audio': {'format': 'PCM WAV', 'sample_rate': 44100,
+    manifest = {'version': 1, 'audio': {'format': 'PCM WAV', 'sample_rate': 32768,
                                        'bit_depth': 16, 'channels': 2},
                 'albums': sorted(albums.values(), key=lambda a: (a['artist'].casefold(), a['album'].casefold()))}
     for album in manifest['albums']:
         album['tracks'].sort(key=lambda t: (t['track'] if t['track'] is not None else 9999, t['file'].casefold()))
+
+    # Track manifests for DSiMusic's FAT filesystem scanner.
+    for entry in manifest['albums']:
+        folder = target / entry['path']
+        names = [track['file'] for track in entry['tracks']]
+        (folder / 'tracks.txt').write_text(
+            '\n'.join(names) + '\n',
+            encoding='utf-8'
+        )
+
     (root / 'library.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print(f'\nDone: {len(manifest["albums"])} albums; {failed} failed files. Output: {root}')
     if failed:
