@@ -17,3 +17,15 @@ source/font_generated.h
 *.sav
 *.mch
 *.ml[0-9]
+
+# Local backups
+*.backup
+
+# Generated files
+source/covers_generated.h
+source/font_generated.h
+
+# Emulator files
+*.sav
+*.mch
+*.ml[0-9]
