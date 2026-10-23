@@ -2,6 +2,7 @@
 #include "font_generated.h"
 #include "../include/library_scanner.h"
 #include "../include/library_tracks.h"
+#include "../include/wav_preview.h"
 #include <fat.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -58,6 +59,7 @@ static LibraryTrack tracks[MAX_TRACKS];
 static int trackCount = 0;
 static int trackSelected = 0;
 static int trackView = 0;
+static const char *audioStatus = "A PLAY WAV PREVIEW";
 
 
 static const char *libraryStatus = "SCANNING";
@@ -319,7 +321,7 @@ static void drawTop(void)
                 116, COL(31,31,31));
 
     rect(top, 12, 160, 232, 1, COL(14,12,21));
-    text(top, 15, 173, "DSIMUSIC LIBRARY", 1, COL(19,27,21));
+    text(top, 15, 173, audioStatus, 1, COL(19,27,21));
 }
 
 
@@ -458,9 +460,28 @@ int main(void)
         int old = selected;
         int oldTrack = trackSelected;
         int oldView = trackView;
+        int audioChanged = 0;
 
         if (trackView) {
+            if ((keys & KEY_A) && trackCount > 0) {
+                char path[512];
+                const char *name = tracks[trackSelected].name;
+
+                if (snprintf(path, sizeof(path), "%s/%s",
+                             albums[selected].path, name)
+                    < (int)sizeof(path)) {
+                    audioStatus = wavPreviewPlay(path);
+                } else {
+                    audioStatus = "TRACK PATH TOO LONG";
+                }
+
+                audioChanged = 1;
+            }
+
             if (keys & KEY_B) {
+                wavPreviewStop();
+                audioStatus = "A PLAY WAV PREVIEW";
+                audioChanged = 1;
                 trackView = 0;
             } else if (trackCount > 0) {
                 if (keys & KEY_DOWN)
@@ -506,7 +527,7 @@ int main(void)
         }
 
         if (selected != old || trackSelected != oldTrack ||
-            trackView != oldView) {
+            trackView != oldView || audioChanged) {
             drawAll();
         }
     }
